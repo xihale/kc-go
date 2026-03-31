@@ -1,0 +1,17 @@
+service:
+  log_file: "/var/log/kc-go.log"
+
+check:
+  url: "http://connect.rom.miui.com/generate_204"
+  interval: 1
+
+account:
+  user: "YOUR_ACCOUNT"
+  password: "YOUR_PASSWORD"
+
+cloudflare:
+  token: ""
+  zone_id: ""
+  domains:
+    - name: "example.com"
+      type: "A"
