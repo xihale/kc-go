@@ -2,8 +2,10 @@ package auth
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -16,9 +18,9 @@ var loginClient = &http.Client{
 	Timeout: loginTimeout,
 }
 
-func LoginPortal(user, pass, ip, portalBaseURL, acIP string) error {
+func LoginPortal(user, pass, ip, portalBaseURL, acIP string) (string, error) {
 	if user == "" || pass == "" {
-		return fmt.Errorf("credentials not provided, skipping auth")
+		return "", fmt.Errorf("credentials not provided, skipping auth")
 	}
 
 	apiURL := fmt.Sprintf(
@@ -28,9 +30,9 @@ func LoginPortal(user, pass, ip, portalBaseURL, acIP string) error {
 	return doLogin(apiURL)
 }
 
-func LoginPortalFromRedirect(user, pass, ip, redirectLocation, portalBaseURL, acIP string) error {
+func LoginPortalFromRedirect(user, pass, ip, redirectLocation, portalBaseURL, acIP string) (string, error) {
 	if user == "" || pass == "" {
-		return fmt.Errorf("credentials not provided, skipping auth")
+		return "", fmt.Errorf("credentials not provided, skipping auth")
 	}
 
 	portalBase := extractPortalBase(redirectLocation)
@@ -45,24 +47,33 @@ func LoginPortalFromRedirect(user, pass, ip, redirectLocation, portalBaseURL, ac
 	return doLogin(apiURL)
 }
 
-func doLogin(apiURL string) error {
+func doLogin(apiURL string) (string, error) {
 	req, err := http.NewRequest("GET", apiURL, nil)
 	if err != nil {
-		return fmt.Errorf("create login request: %w", err)
+		return "", fmt.Errorf("create login request: %w", err)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
 	req.Header.Set("Referer", "http://10.0.3.2/")
 
 	resp, err := loginClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("login failed with status %d", resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
 	}
-	return nil
+
+	if resp.StatusCode != 200 {
+		return string(body), fmt.Errorf("login failed with status %d", resp.StatusCode)
+	}
+	return string(body), nil
+}
+
+func IsLoginSuccess(body string) bool {
+	return strings.Contains(body, "认证成功") || strings.Contains(body, "已经在线")
 }
 
 func extractPortalBase(redirectURL string) string {
@@ -76,11 +87,11 @@ func extractPortalBase(redirectURL string) string {
 	return fmt.Sprintf("%s://%s/eportal/portal/login", u.Scheme, u.Host)
 }
 
-func LoginWithRetry(user, pass, ip, redirectLocation, portalBaseURL, acIP string, retries int) error {
+func LoginWithRetry(user, pass, ip, redirectLocation, portalBaseURL, acIP string, retries int) (string, error) {
 	return LoginWithRetryDelay(user, pass, ip, redirectLocation, portalBaseURL, acIP, retries, loginRetryDelay)
 }
 
-func LoginWithRetryDelay(user, pass, ip, redirectLocation, portalBaseURL, acIP string, retries int, retryDelay time.Duration) error {
+func LoginWithRetryDelay(user, pass, ip, redirectLocation, portalBaseURL, acIP string, retries int, retryDelay time.Duration) (string, error) {
 	if retries < 1 {
 		retries = 1
 	}
@@ -89,20 +100,23 @@ func LoginWithRetryDelay(user, pass, ip, redirectLocation, portalBaseURL, acIP s
 	}
 
 	var lastErr error
+	var lastBody string
 	for i := 0; i < retries; i++ {
+		var body string
 		var err error
 		if redirectLocation != "" {
-			err = LoginPortalFromRedirect(user, pass, ip, redirectLocation, portalBaseURL, acIP)
+			body, err = LoginPortalFromRedirect(user, pass, ip, redirectLocation, portalBaseURL, acIP)
 		} else {
-			err = LoginPortal(user, pass, ip, portalBaseURL, acIP)
+			body, err = LoginPortal(user, pass, ip, portalBaseURL, acIP)
 		}
 		if err == nil {
-			return nil
+			return body, nil
 		}
+		lastBody = body
 		lastErr = err
 		if i < retries-1 && retryDelay > 0 {
 			time.Sleep(retryDelay)
 		}
 	}
-	return fmt.Errorf("login failed after %d attempts: %w", retries, lastErr)
+	return lastBody, fmt.Errorf("login failed after %d attempts: %w", retries, lastErr)
 }
