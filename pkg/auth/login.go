@@ -77,6 +77,17 @@ func extractPortalBase(redirectURL string) string {
 }
 
 func LoginWithRetry(user, pass, ip, redirectLocation, portalBaseURL, acIP string, retries int) error {
+	return LoginWithRetryDelay(user, pass, ip, redirectLocation, portalBaseURL, acIP, retries, loginRetryDelay)
+}
+
+func LoginWithRetryDelay(user, pass, ip, redirectLocation, portalBaseURL, acIP string, retries int, retryDelay time.Duration) error {
+	if retries < 1 {
+		retries = 1
+	}
+	if retryDelay < 0 {
+		retryDelay = 0
+	}
+
 	var lastErr error
 	for i := 0; i < retries; i++ {
 		var err error
@@ -89,8 +100,8 @@ func LoginWithRetry(user, pass, ip, redirectLocation, portalBaseURL, acIP string
 			return nil
 		}
 		lastErr = err
-		if i < retries-1 {
-			time.Sleep(loginRetryDelay)
+		if i < retries-1 && retryDelay > 0 {
+			time.Sleep(retryDelay)
 		}
 	}
 	return fmt.Errorf("login failed after %d attempts: %w", retries, lastErr)
