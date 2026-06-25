@@ -22,7 +22,7 @@
 ```sh
 scp ./scripts/kc-go/openwrt/dist/bin/kc-go-aarch64_generic root@router:/tmp/kc-go
 scp ./scripts/kc-go/config.yaml root@router:/tmp/config.yaml
-ssh root@router 'chmod +x /tmp/kc-go && /tmp/kc-go install --config /tmp/config.yaml'
+ssh root@router 'chmod +x /tmp/kc-go && /tmp/kc-go install -c /tmp/config.yaml'
 ```
 
 Cloudflare 配置只需要填 `token`、`zone_id` 和域名列表，不需要填 `record_id`。

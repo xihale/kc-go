@@ -6,9 +6,7 @@
 
 ## 功能
 
-- 每 1 秒对 `generate_204` 发起一次 `HTTP HEAD`，通过重定向判断是否需要认证
-- 识别门户认证重定向并自动执行登录
-- 断网时自动切换网卡 MAC，快速重新请求 DHCP 并恢复联网
+- 定时检测本机 IP，IP 变化或掉线后自动执行门户认证登录
 - 支持 Cloudflare `A` / `AAAA` 记录自动更新
 - 支持 `procd` 自启动、后台常驻、日志落盘
 - 支持 `log` 命令彩色跟随日志输出
@@ -16,18 +14,18 @@
 ## 命令
 
 ```sh
-kc-go run [--config PATH]
-kc-go install [--config PATH]
-kc-go uninstall [--purge]
-kc-go log [--config PATH] [--n LINES]
+kc-go run [-c PATH] [-f]
+kc-go install [-c PATH]
+kc-go uninstall [-p]
+kc-go log [-c PATH] [-n LINES]
 ```
 
 说明：
 
-- `run` 以前台方式运行主服务
+- `run` 运行主服务，`-f` 以前台方式运行（不 daemonize）
 - `install` 安装到 OpenWrt 并注册 `/etc/init.d/kc-go`
 - `uninstall` 删除程序和 init 脚本，默认保留配置和日志
-- `uninstall --purge` 连配置和日志一起清理
+- `uninstall -p` 连配置和日志一起清理
 - `log` 类似 `tail -f`，并按日志级别着色
 
 ## 配置文件
@@ -79,7 +77,7 @@ Cloudflare Token 建议至少具备：
 ./openwrt/build-bin.sh --arch aarch64_generic
 scp ./openwrt/dist/bin/kc-go-aarch64_generic root@router:/tmp/kc-go
 scp ./config.yaml root@router:/tmp/config.yaml
-ssh root@router 'chmod +x /tmp/kc-go && /tmp/kc-go install --config /tmp/config.yaml'
+ssh root@router 'chmod +x /tmp/kc-go && /tmp/kc-go install -c /tmp/config.yaml'
 ```
 
 已知常见架构：
