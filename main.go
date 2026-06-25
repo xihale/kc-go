@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -16,6 +18,9 @@ import (
 	"kc-go/pkg/ddns"
 	"kc-go/pkg/network"
 )
+
+// loginFailureCooldown 是登录失败后的退避时长，避免每秒冲击认证服务器。
+const loginFailureCooldown = 10 * time.Second
 
 func main() {
 	os.Exit(runCLI(os.Args[1:]))
@@ -74,7 +79,7 @@ func runCommand(args []string) int {
 		return 2
 	}
 
-	if pid, err := readPID(); err == nil && pid > 0 && isProcessAlive(pid) {
+	if pid, st, err := readPID(); err == nil && pid > 0 && isOurProcess(pid, st) {
 		fmt.Fprintf(os.Stderr, "%s is already running (pid %d)\n", ServiceName, pid)
 		return 1
 	}
@@ -122,12 +127,12 @@ func runCommand(args []string) int {
 }
 
 func stopCommand() int {
-	pid, err := readPID()
+	pid, st, err := readPID()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s is not running\n", ServiceName)
 		return 1
 	}
-	if !isProcessAlive(pid) {
+	if !isOurProcess(pid, st) {
 		removePID()
 		fmt.Fprintf(os.Stderr, "%s is not running (stale PID %d removed)\n", ServiceName, pid)
 		return 1
@@ -151,12 +156,12 @@ func stopCommand() int {
 }
 
 func statusCommand() int {
-	pid, err := readPID()
+	pid, st, err := readPID()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s is not running\n", ServiceName)
 		return 1
 	}
-	if !isProcessAlive(pid) {
+	if !isOurProcess(pid, st) {
 		removePID()
 		fmt.Fprintf(os.Stderr, "%s is not running (stale PID %d removed)\n", ServiceName, pid)
 		return 1
@@ -191,19 +196,37 @@ func daemonize() error {
 }
 
 func writePID() error {
-	return os.WriteFile(DefaultPIDPath, []byte(strconv.Itoa(os.Getpid())), 0644)
+	pid := os.Getpid()
+	st, err := processStartTime(pid)
+	if err != nil {
+		// 取不到 starttime 时退化为只写 pid，isOurProcess 会用存活检测兜底
+		return os.WriteFile(DefaultPIDPath, []byte(strconv.Itoa(pid)), 0644)
+	}
+	content := fmt.Sprintf("%d:%d", pid, st)
+	return os.WriteFile(DefaultPIDPath, []byte(content), 0644)
 }
 
 func removePID() {
 	_ = os.Remove(DefaultPIDPath)
 }
 
-func readPID() (int, error) {
+// readPID 解析 PID 文件，格式为 "pid" 或 "pid:starttime"。
+func readPID() (pid int, startTime int64, err error) {
 	data, err := os.ReadFile(DefaultPIDPath)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	return strconv.Atoi(string(data))
+	s := string(data)
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		pid, err = strconv.Atoi(s[:i])
+		if err != nil {
+			return 0, 0, err
+		}
+		startTime, _ = strconv.ParseInt(s[i+1:], 10, 64)
+		return pid, startTime, nil
+	}
+	pid, err = strconv.Atoi(s)
+	return pid, 0, err
 }
 
 func isProcessAlive(pid int) bool {
@@ -214,8 +237,47 @@ func isProcessAlive(pid int) bool {
 	return !errors.Is(err, syscall.ESRCH)
 }
 
+// isOurProcess 判断 PID 文件里记录的进程是否就是当前实例。
+// 同时校验进程存活与 starttime：进程退出后即使 PID 被复用，starttime 也不同，避免误判。
+func isOurProcess(pid int, startTime int64) bool {
+	if !isProcessAlive(pid) {
+		return false
+	}
+	if startTime == 0 {
+		// 文件里没有 starttime（取不到或旧格式），只能退化为存活检测
+		return true
+	}
+	st, err := processStartTime(pid)
+	if err != nil {
+		return true
+	}
+	return st == startTime
+}
+
+// processStartTime 读取 /proc/<pid>/stat 的 starttime（第 22 字段），
+// 作为进程身份指纹——在该进程生命周期内不变。
+func processStartTime(pid int) (int64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	// /proc/<pid>/stat 的 comm 字段可能含空格和括号，从最后一个 ')' 之后解析
+	end := bytes.LastIndexByte(data, ')')
+	if end < 0 || end+1 >= len(data) {
+		return 0, fmt.Errorf("parse /proc/%d/stat: no comm", pid)
+	}
+	fields := strings.Fields(string(data[end+1:]))
+	// comm 后第 20 个字段是 starttime（state=1, ppid=2, ... starttime=20）
+	if len(fields) < 20 {
+		return 0, fmt.Errorf("parse /proc/%d/stat: too few fields", pid)
+	}
+	return strconv.ParseInt(fields[19], 10, 64)
+}
+
 func runService(ctx context.Context, cfg *Config) {
-	var lastDDNSUpdate time.Time
+	var lastIP string
+	var loggedIn bool
+	var loginCooldown time.Duration // 非零表示上次登录未成功，需等待后再试
 
 	for {
 		select {
@@ -231,44 +293,82 @@ func runService(ctx context.Context, cfg *Config) {
 			ip, err := network.GetInterfaceIP(iface, false)
 			if err != nil || ip == "" {
 				log.Printf("[WARN] No IP on %s: %v", iface, err)
-			} else {
-				body, err := auth.LoginWithRetryDelay(cfg.Account.User, cfg.Account.Password, ip, "", cfg.Portal.BaseURL, cfg.Portal.ACIP, 1, 0)
+			} else if ip != lastIP {
+				if lastIP == "" {
+					log.Printf("[INFO] IP acquired: %s", ip)
+				} else {
+					log.Printf("[INFO] IP changed: %s -> %s", lastIP, ip)
+				}
+				lastIP = ip
+				loggedIn = false
+				loginCooldown = 0
+			}
+
+			if lastIP != "" && !loggedIn && loginCooldown <= 0 {
+				body, err := auth.LoginWithRetryDelay(cfg.Account.User, cfg.Account.Password, lastIP, "", cfg.Portal.BaseURL, cfg.Portal.ACIP, 1, 0)
 				if err != nil {
-					log.Printf("[WARN] Login error: %v | body: %s", err, body)
+					// 登录失败后退避，避免每秒冲击认证服务器（1秒轮询 + 3秒超时会堆积）
+					loginCooldown = loginFailureCooldown
+					log.Printf("[WARN] Login error, backing off %s: %v | body: %s", loginCooldown, err, body)
 				} else if auth.IsLoginSuccess(body) {
 					log.Printf("[SUCCESS] %s", body)
-					if shouldUpdateDDNS(lastDDNSUpdate) {
-						handleDDNS(cfg)
-						lastDDNSUpdate = time.Now()
-					}
+					loggedIn = true
+					handleDDNS(cfg, lastIP)
 				} else {
-					log.Printf("[INFO] Login response: %s", body)
+					loginCooldown = loginFailureCooldown
+					log.Printf("[INFO] Login unsuccessful, backing off %s: %s", loginCooldown, body)
 				}
 			}
+		}
+
+		// 等待下一轮：正常按 interval，登录失败冷却期内按剩余冷却时间
+		wait := time.Duration(cfg.Check.Interval) * time.Second
+		if loginCooldown > 0 && loginCooldown > wait {
+			wait = loginCooldown
+		}
+		if loginCooldown > 0 {
+			loginCooldown -= wait
 		}
 
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(time.Duration(cfg.Check.Interval) * time.Second):
+		case <-time.After(wait):
 		}
 	}
 }
 
-func handleDDNS(cfg *Config) {
+func handleDDNS(cfg *Config, currentIP string) {
 	if cfg.Cloudflare.Token == "" {
 		return
 	}
 
-	iface, err := network.GetDefaultInterface()
-	if err != nil {
-		log.Printf("[DDNS ERROR] Cannot resolve default interface: %v", err)
-		return
+	// AAAA 记录的 IPv6 地址都来自同一张网卡，只解析一次
+	var iface string
+	hasAAAA := false
+	for _, domain := range cfg.Cloudflare.Domains {
+		if domain.Type == "AAAA" {
+			hasAAAA = true
+			break
+		}
+	}
+	if hasAAAA {
+		var err error
+		iface, err = network.GetDefaultInterface()
+		if err != nil {
+			log.Printf("[DDNS ERROR] Cannot resolve default interface: %v", err)
+			return
+		}
 	}
 
 	for _, domain := range cfg.Cloudflare.Domains {
-		isIPv6 := domain.Type == "AAAA"
-		ip, err := network.GetInterfaceIP(iface, isIPv6)
+		var ip string
+		var err error
+		if domain.Type == "AAAA" {
+			ip, err = network.GetInterfaceIP(iface, true)
+		} else {
+			ip = currentIP
+		}
 		if err != nil {
 			log.Printf("[DDNS ERROR] Cannot get %s address: %v", domain.Type, err)
 			continue
@@ -283,10 +383,6 @@ func handleDDNS(cfg *Config) {
 			log.Printf("[DDNS INFO] %s already points to %s", domain.Name, ip)
 		}
 	}
-}
-
-func shouldUpdateDDNS(lastUpdate time.Time) bool {
-	return lastUpdate.IsZero() || time.Since(lastUpdate) >= time.Hour
 }
 
 func isFlagArg(value string) bool {
