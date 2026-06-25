@@ -17,11 +17,19 @@ const (
 	DefaultPortalBaseURL = "http://10.0.3.2:801"
 	DefaultPortalACIP    = "172.16.254.2"
 	ServiceName          = "kc-go"
+
+	// 默认日志轮转：单文件 2 MiB，保留 3 份备份（含当前文件最多约 8 MiB）。
+	// tmpfs 内存环境，不宜设大。
+	defaultLogMaxBytes = 2 * 1024 * 1024
+	defaultLogBackups  = 3
 )
 
 type Config struct {
 	Service struct {
-		LogFile string `yaml:"log_file"`
+		LogFile    string `yaml:"log_file"`
+		LogMaxSize int64  `yaml:"log_max_size"` // 单文件最大字节数，0 用默认 (2MiB)
+		LogBackups int    `yaml:"log_backups"`  // 保留旧备份份数，0 用默认 (3)
+		Timezone   string `yaml:"timezone"`     // 本地时区如 "CST-8"；空则读 /etc/TZ
 	} `yaml:"service"`
 	Check struct {
 		URL      string `yaml:"url"`
@@ -68,6 +76,12 @@ func (c *Config) Validate() error {
 	if c.Service.LogFile == "" {
 		c.Service.LogFile = DefaultLogPath
 	}
+	if c.Service.LogMaxSize <= 0 {
+		c.Service.LogMaxSize = defaultLogMaxBytes
+	}
+	if c.Service.LogBackups <= 0 {
+		c.Service.LogBackups = defaultLogBackups
+	}
 	if c.Check.URL == "" {
 		c.Check.URL = "http://connect.rom.miui.com/generate_204"
 	}
@@ -107,6 +121,9 @@ func ResolveLogPathFromConfig(path string) string {
 func DefaultConfigTemplate() string {
 	return fmt.Sprintf(`service:
   log_file: %q
+  # log_max_size: %d      # 单文件最大字节，超出后轮转
+  # log_backups: %d       # 保留的旧备份份数
+  # timezone: "CST-8"     # 本地时区；留空则读 /etc/TZ
 
 check:
   url: %q
@@ -126,6 +143,7 @@ cloudflare:
   domains:
     - name: %q
       type: %q
-`, DefaultLogPath, "http://connect.rom.miui.com/generate_204", "YOUR_ACCOUNT", "YOUR_PASSWORD",
+`, DefaultLogPath, defaultLogMaxBytes, defaultLogBackups,
+		"http://connect.rom.miui.com/generate_204", "YOUR_ACCOUNT", "YOUR_PASSWORD",
 		DefaultPortalBaseURL, DefaultPortalACIP, "", "", "example.com", "A")
 }

@@ -98,12 +98,18 @@ func runCommand(args []string) int {
 		}
 	}
 
-	closer, err := SetupLogging(cfg.Service.LogFile)
+	tz := applyTimezone(cfg.Service.Timezone)
+
+	closer, err := SetupLogging(cfg.Service.LogFile, cfg.Service.LogMaxSize, cfg.Service.LogBackups)
 	if err != nil {
 		log.Printf("[ERROR] Failed to prepare log file %s: %v", cfg.Service.LogFile, err)
 		return 1
 	}
 	defer closer.Close()
+
+	if tz != "" {
+		log.Printf("[INFO] Timezone set to %s", tz)
+	}
 
 	if err := writePID(); err != nil {
 		log.Printf("[WARN] Failed to write PID file: %v", err)
@@ -309,9 +315,14 @@ func runService(ctx context.Context, cfg *Config) {
 				if err != nil {
 					// 登录失败后退避，避免每秒冲击认证服务器（1秒轮询 + 3秒超时会堆积）
 					loginCooldown = loginFailureCooldown
-					log.Printf("[WARN] Login error, backing off %s: %v | body: %s", loginCooldown, err, body)
+					log.Printf("[WARN] Login error, backing off %s: %v | body: %s", loginCooldown, redact(err.Error()), redact(body))
 				} else if auth.IsLoginSuccess(body) {
-					log.Printf("[SUCCESS] %s", body)
+					// 区分「真正登录成功」与「已经在线」：后者不算新动作，降级为 INFO
+					if strings.Contains(body, "已经在线") {
+						log.Printf("[INFO] Already online: %s | body: %s", lastIP, body)
+					} else {
+						log.Printf("[SUCCESS] %s", body)
+					}
 					loggedIn = true
 					handleDDNS(cfg, lastIP)
 				} else {
