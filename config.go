@@ -48,7 +48,8 @@ type Config struct {
 		ZoneID  string `yaml:"zone_id"`
 		Domains []struct {
 			Name string `yaml:"name"`
-			Type string `yaml:"type"`
+			IPv4 bool   `yaml:"ipv4"`
+			IPv6 bool   `yaml:"ipv6"`
 		} `yaml:"domains"`
 	} `yaml:"cloudflare"`
 }
@@ -97,6 +98,14 @@ func (c *Config) Validate() error {
 	if c.Portal.ACIP == "" {
 		c.Portal.ACIP = DefaultPortalACIP
 	}
+	for _, d := range c.Cloudflare.Domains {
+		if d.Name == "" {
+			return fmt.Errorf("cloudflare domains: entry with empty name")
+		}
+		if !d.IPv4 && !d.IPv6 {
+			return fmt.Errorf("cloudflare domain %s: enable at least one of ipv4/ipv6", d.Name)
+		}
+	}
 	return nil
 }
 
@@ -138,12 +147,15 @@ portal:
   ac_ip: %q
 
 cloudflare:
+  # 获取: https://dash.cloudflare.com/profile/api-tokens
   token: %q
   zone_id: %q
   domains:
+    # true = 更新对应 A/AAAA 记录
     - name: %q
-      type: %q
+      ipv4: true
+      ipv6: false
 `, DefaultLogPath, defaultLogMaxBytes, defaultLogBackups,
 		"http://connect.rom.miui.com/generate_204", "YOUR_ACCOUNT", "YOUR_PASSWORD",
-		DefaultPortalBaseURL, DefaultPortalACIP, "", "", "example.com", "A")
+		DefaultPortalBaseURL, DefaultPortalACIP, "", "", "example.com")
 }

@@ -46,7 +46,7 @@ func UpdateRecord(token, zoneID, name, recordType, ip string) (bool, error) {
 		return false, fmt.Errorf("list records: %w", err)
 	}
 	if listResp.StatusCode == http.StatusUnauthorized {
-		return false, fmt.Errorf("cloudflare token rejected (401) — check API token")
+		return false, fmt.Errorf("cloudflare token rejected (401) — create one at https://dash.cloudflare.com/profile/api-tokens")
 	}
 	if listResp.StatusCode < 200 || listResp.StatusCode >= 300 {
 		return false, fmt.Errorf("list records failed with status %d", listResp.StatusCode)
@@ -87,7 +87,7 @@ func UpdateRecord(token, zoneID, name, recordType, ip string) (bool, error) {
 		return false, fmt.Errorf("read update response: %w", err)
 	}
 	if updateResp.StatusCode == http.StatusUnauthorized {
-		return false, fmt.Errorf("cloudflare token rejected (401) — check API token")
+		return false, fmt.Errorf("cloudflare token rejected (401) — create one at https://dash.cloudflare.com/profile/api-tokens")
 	}
 	if updateResp.StatusCode < 200 || updateResp.StatusCode >= 300 {
 		return false, fmt.Errorf("update failed with status %d: %s", updateResp.StatusCode, string(body))

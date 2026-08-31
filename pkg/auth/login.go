@@ -25,7 +25,7 @@ func LoginPortal(user, pass, ip, portalBaseURL, acIP string) (string, error) {
 
 	apiURL := fmt.Sprintf(
 		"%s/eportal/portal/login?callback=dr1004&login_method=1&user_account=%%2C0%%2C%s&user_password=%s&wlan_user_ip=%s&wlan_user_ipv6=&wlan_ac_ip=%s&wlan_ac_name=&jsVersion=4.1.3&terminal_type=1&lang=zh-cn&v=6985&lang=zh",
-		portalBaseURL, user, pass, ip, acIP,
+		portalBaseURL, user, url.QueryEscape(pass), ip, acIP,
 	)
 	return doLogin(apiURL)
 }
@@ -42,7 +42,7 @@ func LoginPortalFromRedirect(user, pass, ip, redirectLocation, portalBaseURL, ac
 
 	apiURL := fmt.Sprintf(
 		"%s?callback=dr1004&login_method=1&user_account=%%2C0%%2C%s&user_password=%s&wlan_user_ip=%s&wlan_user_ipv6=&wlan_ac_ip=%s&wlan_ac_name=&jsVersion=4.1.3&terminal_type=1&lang=zh-cn&v=6985&lang=zh",
-		portalBase, user, pass, ip, acIP,
+		portalBase, user, url.QueryEscape(pass), ip, acIP,
 	)
 	return doLogin(apiURL)
 }

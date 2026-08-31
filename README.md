@@ -49,20 +49,20 @@ account:
   password: "YOUR_PASSWORD"
 
 cloudflare:
+  # 获取: https://dash.cloudflare.com/profile/api-tokens
   token: "YOUR_CLOUDFLARE_API_TOKEN"
   zone_id: "YOUR_ZONE_ID"
   domains:
     - name: "g.xihale.top"
-      type: "A"
+      ipv4: true
     - name: "g6.xihale.top"
-      type: "AAAA"
+      ipv6: true
 ```
 
 说明：
 
-- 只需要填 `token`、`zone_id`、域名和记录类型
-- 不需要填 Cloudflare `record_id`
-- 程序会按 `name + type` 自动查询并更新对应记录
+- 只需要填 `token`、`zone_id` 和域名列表，不需要填 Cloudflare `record_id`
+- 域名条目用 `ipv4` / `ipv6` 选择更新的记录类型（`A` / `AAAA`），可同时开启
 
 Cloudflare Token 建议至少具备：
 

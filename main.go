@@ -354,16 +354,16 @@ func handleDDNS(cfg *Config, currentIP string) {
 		return
 	}
 
-	// AAAA 记录的 IPv6 地址都来自同一张网卡，只解析一次
+	// 所有 IPv6 地址都来自同一张网卡，只解析一次
 	var iface string
-	hasAAAA := false
+	needV6 := false
 	for _, domain := range cfg.Cloudflare.Domains {
-		if domain.Type == "AAAA" {
-			hasAAAA = true
+		if domain.IPv6 {
+			needV6 = true
 			break
 		}
 	}
-	if hasAAAA {
+	if needV6 {
 		var err error
 		iface, err = network.GetDefaultInterface()
 		if err != nil {
@@ -373,26 +373,30 @@ func handleDDNS(cfg *Config, currentIP string) {
 	}
 
 	for _, domain := range cfg.Cloudflare.Domains {
-		var ip string
-		var err error
-		if domain.Type == "AAAA" {
-			ip, err = network.GetInterfaceIP(iface, true)
-		} else {
-			ip = currentIP
+		if domain.IPv4 {
+			updated, err := ddns.UpdateRecord(cfg.Cloudflare.Token, cfg.Cloudflare.ZoneID, domain.Name, "A", currentIP)
+			reportDDNS(domain.Name, currentIP, updated, err)
 		}
-		if err != nil {
-			log.Printf("[DDNS ERROR] Cannot get %s address: %v", domain.Type, err)
-			continue
+		if domain.IPv6 {
+			ip, err := network.GetInterfaceIP(iface, true)
+			if err != nil {
+				log.Printf("[DDNS ERROR] Cannot get %s IPv6 address: %v", domain.Name, err)
+				continue
+			}
+			updated, err := ddns.UpdateRecord(cfg.Cloudflare.Token, cfg.Cloudflare.ZoneID, domain.Name, "AAAA", ip)
+			reportDDNS(domain.Name, ip, updated, err)
 		}
+	}
+}
 
-		updated, err := ddns.UpdateRecord(cfg.Cloudflare.Token, cfg.Cloudflare.ZoneID, domain.Name, domain.Type, ip)
-		if err != nil {
-			log.Printf("[DDNS ERROR] Failed to update %s: %v", domain.Name, err)
-		} else if updated {
-			log.Printf("[DDNS SUCCESS] Updated %s to %s", domain.Name, ip)
-		} else {
-			log.Printf("[DDNS INFO] %s already points to %s", domain.Name, ip)
-		}
+func reportDDNS(name, ip string, updated bool, err error) {
+	switch {
+	case err != nil:
+		log.Printf("[DDNS ERROR] Failed to update %s: %v", name, err)
+	case updated:
+		log.Printf("[DDNS SUCCESS] Updated %s to %s", name, ip)
+	default:
+		log.Printf("[DDNS INFO] %s already points to %s", name, ip)
 	}
 }
 

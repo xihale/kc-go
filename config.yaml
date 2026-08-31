@@ -10,8 +10,11 @@ account:
   password: "YOUR_PASSWORD"
 
 cloudflare:
+  # 获取: https://dash.cloudflare.com/profile/api-tokens
   token: ""
   zone_id: ""
   domains:
+    # true = 更新对应 A/AAAA 记录
     - name: "example.com"
-      type: "A"
+      ipv4: true
+      ipv6: false
